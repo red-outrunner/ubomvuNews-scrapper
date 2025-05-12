@@ -1,0 +1,46 @@
+[
+  {
+    "url": "https://www.iol.co.za",
+    "timestamp": "2025-05-12T11:03:24.752359831+02:00",
+    "page_views": "",
+    "unique_visitors": "",
+    "security_headers": {},
+    "metadata": {
+      "IE=edge": "X-UA-Compatible",
+      "article:publisher": "https://iol.co.za",
+      "description": "Top stories and news highlights from around South Africa, Africa and across the globe as they happen. Read the latest local and International news on IOL today.",
+      "facebook-domain-verification": "m85xaz5xdy8fiifyys11g0z5i7e2b0",
+      "google-site-verification": "iQCzO2whcLNU6_F3xi1Dck7JMALz7869mBLTQf08wJo",
+      "msapplication-TileColor": "#ffffff",
+      "msvalidate.01": "4BE9A236252D15311B31D1EA103EE632",
+      "theme-color": "#ffffff",
+      "twitter:card": "summary_large_image",
+      "twitter:creator": "@IOL",
+      "twitter:description": "Top stories and news highlights from around South Africa, Africa and across the globe as they happen. Read the latest local and International news on IOL today.",
+      "twitter:image": "https://iol.co.za/_next/static/media/iol.2d0c9660.svg",
+      "twitter:image:height": "253",
+      "twitter:image:type": "image/jpeg",
+      "twitter:image:width": "331",
+      "twitter:site": "@IOL",
+      "twitter:title": "IOL",
+      "unsafe-url": "referrer",
+      "viewport": "width=device-width, initial-scale=1, maximum-scale=1"
+    }
+  },
+  {
+    "url": "https://www.businesstech.co.za",
+    "timestamp": "2025-05-12T11:03:24.752366827+02:00",
+    "page_views": "",
+    "unique_visitors": "",
+    "security_headers": {},
+    "metadata": {
+      "apple-mobile-web-app-status-bar-style": "black-translucent",
+      "description": "BusinessTech – Business Technology news and views",
+      "generator": "WordPress 6.7.2",
+      "msapplication-TileImage": "https://businesstech.co.za/news/wp-content/uploads/2019/01/cropped-Square-Logo-270x270.png",
+      "robots": "max-image-preview:large",
+      "theme-color": "#ffffff",
+      "viewport": "width=device-width, initial-scale=1"
+    }
+  }
+]
