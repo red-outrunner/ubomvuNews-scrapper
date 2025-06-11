@@ -1,8 +1,12 @@
 [
   {
     "url": "https://www.iol.co.za",
-    "timestamp": "2025-06-11T14:57:21.613416077+02:00",
-    "traffic_data": {},
+    "timestamp": "2025-06-11T15:06:41.753562468+02:00",
+    "social_links": {
+      "facebook_url": "https://www.facebook.com/IOLnews",
+      "x_url": "https://x.com/IOL",
+      "instagram_url": "https://www.instagram.com/iolnews"
+    },
     "security_headers": {},
     "metadata": {
       "IE=edge": "X-UA-Compatible",
@@ -28,8 +32,11 @@
   },
   {
     "url": "https://www.businesstech.co.za",
-    "timestamp": "2025-06-11T14:57:21.613450669+02:00",
-    "traffic_data": {},
+    "timestamp": "2025-06-11T15:06:41.753570682+02:00",
+    "social_links": {
+      "facebook_url": "https://www.facebook.com/BusinessTechSA",
+      "x_url": "https://twitter.com/businesstechSA"
+    },
     "security_headers": {},
     "metadata": {
       "apple-mobile-web-app-status-bar-style": "black-translucent",

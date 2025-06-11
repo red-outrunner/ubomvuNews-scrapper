@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,18 +14,19 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
-// TrafficData holds structured information about website traffic.
-type TrafficData struct {
-	PageViews      string `json:"page_views,omitempty"`
-	UniqueVisitors string `json:"unique_visitors,omitempty"`
-	Source         string `json:"source,omitempty"` // e.g., "Meta Tag", "Inline JavaScript"
+// SocialPresence holds the URLs for a brand's official social media pages.
+type SocialPresence struct {
+	FacebookURL  string `json:"facebook_url,omitempty"`
+	X_URL        string `json:"x_url,omitempty"` // For X / Twitter
+	InstagramURL string `json:"instagram_url,omitempty"`
 }
 
 // ScrapedData holds all the information scraped from a website.
+// The TrafficData has been replaced with SocialPresence.
 type ScrapedData struct {
 	URL             string            `json:"url"`
 	Timestamp       time.Time         `json:"timestamp"`
-	Traffic         TrafficData       `json:"traffic_data"`
+	SocialLinks     SocialPresence    `json:"social_links"`
 	SecurityHeaders map[string]string `json:"security_headers"`
 	Metadata        map[string]string `json:"metadata"`
 	Error           string            `json:"error,omitempty"`
@@ -56,7 +56,7 @@ func NewScraper(config *Config) *Scraper {
 	logger := log.New(os.Stdout, "scraper: ", log.LstdFlags|log.Lshortfile)
 	c := colly.NewCollector(
 		colly.Async(true),
-				colly.MaxDepth(1),
+				colly.MaxDepth(1), // We only care about the main page
 				colly.UserAgent("NewsScraper/1.0"),
 	)
 	c.WithTransport(&http.Transport{
@@ -84,7 +84,7 @@ func (s *Scraper) Scrape(url string) {
 	data := ScrapedData{
 		URL:             url,
 		Timestamp:       time.Now(),
-		Traffic:         TrafficData{},
+		SocialLinks:     SocialPresence{}, // Initialize the new struct
 		SecurityHeaders: make(map[string]string),
 		Metadata:        make(map[string]string),
 	}
@@ -99,48 +99,41 @@ func (s *Scraper) Scrape(url string) {
 		}
 	})
 
+	// Scrape metadata from <meta> tags.
 	c.OnHTML("meta", func(e *colly.HTMLElement) {
 		name := e.Attr("name")
 		content := e.Attr("content")
 		if name != "" && content != "" {
 			data.Metadata[name] = content
-			switch strings.ToLower(name) {
-				case "page-views", "page_views":
-					data.Traffic.PageViews = content
-					data.Traffic.Source = "Meta Tag"
-				case "unique-visitors", "unique_visitors":
-					data.Traffic.UniqueVisitors = content
-					if data.Traffic.Source == "" {
-						data.Traffic.Source = "Meta Tag"
-					}
-			}
 		}
 	})
 
-	// ** NEW: Method 1 Implementation - Search inline scripts **
-	c.OnHTML("script", func(e *colly.HTMLElement) {
-		// Only proceed if we haven't already found traffic data
-		if data.Traffic.Source != "" {
-			return
+	// ** NEW: Scrape social media links from <a> tags **
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		link := e.Request.AbsoluteURL(e.Attr("href"))
+		lowerLink := strings.ToLower(link)
+
+		// Check for Facebook profile link
+		if strings.Contains(lowerLink, "facebook.com/") && data.SocialLinks.FacebookURL == "" {
+			// Basic filter to avoid share links
+			if !strings.Contains(lowerLink, "sharer") && !strings.Contains(lowerLink, "plugins") {
+				data.SocialLinks.FacebookURL = link
+				s.logger.Printf("Found Facebook link on %s: %s", url, link)
+			}
 		}
 
-		scriptContent := e.Text
-		// Regex to find variable assignments containing JSON
-		re := regexp.MustCompile(`(?i)(?:var|window|const|let)\s+[\w\.\_]*?(?:data|config|metrics|analytics)[\w\.\_]*?\s*=\s*({.*?});`)
-		matches := re.FindStringSubmatch(scriptContent)
-
-		if len(matches) > 1 {
-			jsonString := matches[1]
-			var jsonData map[string]interface{}
-			if err := json.Unmarshal([]byte(jsonString), &jsonData); err == nil {
-				// Successfully parsed JSON, now search for keys
-				if pv, uv := findTrafficInMap(jsonData); pv != "" || uv != "" {
-					s.logger.Printf("Found traffic data in inline script on %s", url)
-					data.Traffic.PageViews = pv
-					data.Traffic.UniqueVisitors = uv
-					data.Traffic.Source = "Inline JavaScript"
-				}
+		// Check for X (Twitter) profile link
+		if (strings.Contains(lowerLink, "twitter.com/") || strings.Contains(lowerLink, "x.com/")) && data.SocialLinks.X_URL == "" {
+			if !strings.Contains(lowerLink, "intent/tweet") {
+				data.SocialLinks.X_URL = link
+				s.logger.Printf("Found X/Twitter link on %s: %s", url, link)
 			}
+		}
+
+		// Check for Instagram profile link
+		if strings.Contains(lowerLink, "instagram.com/") && data.SocialLinks.InstagramURL == "" {
+			data.SocialLinks.InstagramURL = link
+			s.logger.Printf("Found Instagram link on %s: %s", url, link)
 		}
 	})
 
@@ -158,31 +151,6 @@ func (s *Scraper) Scrape(url string) {
 
 	c.Wait()
 	s.results <- data
-}
-
-// findTrafficInMap recursively searches a map for traffic-related keys.
-func findTrafficInMap(data map[string]interface{}) (pageViews, uniqueVisitors string) {
-	for key, val := range data {
-		// Check top-level keys
-		switch strings.ToLower(key) {
-			case "pageviews", "page_views", "impressions":
-				pageViews = fmt.Sprintf("%v", val)
-			case "uniquevisitors", "unique_visitors", "visitors":
-				uniqueVisitors = fmt.Sprintf("%v", val)
-		}
-
-		// Recursively check nested maps
-		if nestedMap, ok := val.(map[string]interface{}); ok {
-			pv, uv := findTrafficInMap(nestedMap)
-			if pv != "" && pageViews == "" {
-				pageViews = pv
-			}
-			if uv != "" && uniqueVisitors == "" {
-				uniqueVisitors = uv
-			}
-		}
-	}
-	return
 }
 
 // Run starts the concurrent scraping process.
@@ -224,7 +192,7 @@ func (s *Scraper) SaveResults(data []ScrapedData) error {
 func main() {
 	app := &cli.App{
 		Name:  "news-scraper",
-		Usage: "Scrape traffic, security, and metadata from news websites",
+		Usage: "Scrape social links, security, and metadata from news websites",
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:    "urls",
