@@ -11,18 +11,16 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
-	"github.com/urfave/cli/v2"
 )
 
 // SocialPresence holds the URLs for a brand's official social media pages.
 type SocialPresence struct {
 	FacebookURL  string `json:"facebook_url,omitempty"`
-	X_URL        string `json:"x_url,omitempty"` // For X / Twitter
+	XURL         string `json:"x_url,omitempty"` // For X / Twitter
 	InstagramURL string `json:"instagram_url,omitempty"`
 }
 
 // ScrapedData holds all the information scraped from a website.
-// The TrafficData has been replaced with SocialPresence.
 type ScrapedData struct {
 	URL             string            `json:"url"`
 	Timestamp       time.Time         `json:"timestamp"`
@@ -32,18 +30,25 @@ type ScrapedData struct {
 	Error           string            `json:"error,omitempty"`
 }
 
-// Config holds the scraper's configuration.
-type Config struct {
+// ScrapeRequest represents the request body for scraping.
+type ScrapeRequest struct {
+	URLs       []string `json:"urls"`
+	MaxWorkers int      `json:"max_workers"`
+	RateLimit  int      `json:"rate_limit"` // in seconds
+	Timeout    int      `json:"timeout"`    // in seconds
+}
+
+// ScraperConfig holds the scraper's configuration.
+type ScraperConfig struct {
 	URLs       []string
 	MaxWorkers int
 	RateLimit  time.Duration
-	OutputFile string
 	Timeout    time.Duration
 }
 
 // Scraper manages the scraping process.
 type Scraper struct {
-	config      *Config
+	config      *ScraperConfig
 	collector   *colly.Collector
 	logger      *log.Logger
 	results     chan ScrapedData
@@ -52,12 +57,12 @@ type Scraper struct {
 }
 
 // NewScraper initializes a new Scraper instance.
-func NewScraper(config *Config) *Scraper {
+func NewScraper(config *ScraperConfig) *Scraper {
 	logger := log.New(os.Stdout, "scraper: ", log.LstdFlags|log.Lshortfile)
 	c := colly.NewCollector(
 		colly.Async(true),
-				colly.MaxDepth(1), // We only care about the main page
-				colly.UserAgent("NewsScraper/1.0"),
+		colly.MaxDepth(1),
+		colly.UserAgent("NewsScraper/1.0"),
 	)
 	c.WithTransport(&http.Transport{
 		ResponseHeaderTimeout: config.Timeout,
@@ -65,9 +70,9 @@ func NewScraper(config *Config) *Scraper {
 	})
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
-	 Parallelism: config.MaxWorkers,
-	 Delay:       config.RateLimit,
-	 RandomDelay: config.RateLimit / 2,
+		Parallelism: config.MaxWorkers,
+		Delay:       config.RateLimit,
+		RandomDelay: config.RateLimit / 2,
 	})
 	return &Scraper{
 		config:      config,
@@ -84,7 +89,7 @@ func (s *Scraper) Scrape(url string) {
 	data := ScrapedData{
 		URL:             url,
 		Timestamp:       time.Now(),
-		SocialLinks:     SocialPresence{}, // Initialize the new struct
+		SocialLinks:     SocialPresence{},
 		SecurityHeaders: make(map[string]string),
 		Metadata:        make(map[string]string),
 	}
@@ -108,14 +113,13 @@ func (s *Scraper) Scrape(url string) {
 		}
 	})
 
-	// ** NEW: Scrape social media links from <a> tags **
+	// Scrape social media links from <a> tags
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Request.AbsoluteURL(e.Attr("href"))
 		lowerLink := strings.ToLower(link)
 
 		// Check for Facebook profile link
 		if strings.Contains(lowerLink, "facebook.com/") && data.SocialLinks.FacebookURL == "" {
-			// Basic filter to avoid share links
 			if !strings.Contains(lowerLink, "sharer") && !strings.Contains(lowerLink, "plugins") {
 				data.SocialLinks.FacebookURL = link
 				s.logger.Printf("Found Facebook link on %s: %s", url, link)
@@ -123,9 +127,9 @@ func (s *Scraper) Scrape(url string) {
 		}
 
 		// Check for X (Twitter) profile link
-		if (strings.Contains(lowerLink, "twitter.com/") || strings.Contains(lowerLink, "x.com/")) && data.SocialLinks.X_URL == "" {
+		if (strings.Contains(lowerLink, "twitter.com/") || strings.Contains(lowerLink, "x.com/")) && data.SocialLinks.XURL == "" {
 			if !strings.Contains(lowerLink, "intent/tweet") {
-				data.SocialLinks.X_URL = link
+				data.SocialLinks.XURL = link
 				s.logger.Printf("Found X/Twitter link on %s: %s", url, link)
 			}
 		}
@@ -172,76 +176,139 @@ func (s *Scraper) Run() []ScrapedData {
 	return results
 }
 
-// SaveResults saves the scraped data to a JSON file.
-func (s *Scraper) SaveResults(data []ScrapedData) error {
-	file, err := os.Create(s.config.OutputFile)
-	if err != nil {
-		return fmt.Errorf("failed to create output file '%s': %w", s.config.OutputFile, err)
+// Global scraper lock to prevent concurrent scrapes
+var scraperMutex sync.Mutex
+
+// handleScrape handles the /api/scrape endpoint
+func handleScrape(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("failed to encode data to JSON: %w", err)
+
+	var req ScrapeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
 	}
-	s.logger.Printf("Successfully saved %d results to %s", len(data), s.config.OutputFile)
-	return nil
+
+	// Default values
+	if req.MaxWorkers <= 0 {
+		req.MaxWorkers = 2
+	}
+	if req.RateLimit <= 0 {
+		req.RateLimit = 2
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = 10
+	}
+
+	if len(req.URLs) == 0 {
+		http.Error(w, "No URLs provided", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent concurrent scrapes
+	scraperMutex.Lock()
+	defer scraperMutex.Unlock()
+
+	config := &ScraperConfig{
+		URLs:       req.URLs,
+		MaxWorkers: req.MaxWorkers,
+		RateLimit:  time.Duration(req.RateLimit) * time.Second,
+		Timeout:    time.Duration(req.Timeout) * time.Second,
+	}
+
+	scraper := NewScraper(config)
+	results := scraper.Run()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
-// main is the entry point of the CLI application.
-func main() {
-	app := &cli.App{
-		Name:  "news-scraper",
-		Usage: "Scrape social links, security, and metadata from news websites",
-		Flags: []cli.Flag{
-			&cli.StringSliceFlag{
-				Name:    "urls",
-				Aliases: []string{"u"},
-				Usage:   "Comma-separated list of URLs to scrape",
-				Value:   cli.NewStringSlice("https://www.news24.com", "https://www.iol.co.za", "https://businesstech.co.za"),
-			},
-			&cli.StringFlag{
-				Name:    "output",
-				Aliases: []string{"o"},
-				Usage:   "Output file for scraped JSON data",
-				Value:   "results.json",
-			},
-			&cli.IntFlag{
-				Name:    "workers",
-				Aliases: []string{"w"},
-				Usage:   "Number of concurrent scraping workers",
-				Value:   2,
-			},
-			&cli.DurationFlag{
-				Name:    "rate-limit",
-				Aliases: []string{"r"},
-				Usage:   "Delay between requests per domain (e.g., 2s, 500ms)",
-				Value:   2 * time.Second,
-			},
-			&cli.DurationFlag{
-				Name:    "timeout",
-				Aliases: []string{"t"},
-				Usage:   "HTTP request timeout",
-				Value:   10 * time.Second,
-			},
-		},
-		Action: func(c *cli.Context) error {
-			config := &Config{
-				URLs:       c.StringSlice("urls"),
-				MaxWorkers: c.Int("workers"),
-				RateLimit:  c.Duration("rate-limit"),
-				OutputFile: c.String("output"),
-				Timeout:    c.Duration("timeout"),
+// handleHealth handles the /api/health endpoint
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// serveFrontend serves the React frontend static files
+func serveFrontend(fs http.FileSystem) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the requested file
+		path := r.URL.Path
+		if path == "/" || path == "" {
+			path = "/index.html"
+		}
+
+		file, err := fs.Open(path)
+		if err != nil {
+			// If file not found, serve index.html for SPA routing
+			path = "/index.html"
+			file, err = fs.Open(path)
+			if err != nil {
+				http.Error(w, "File not found", http.StatusNotFound)
+				return
 			}
-			scraper := NewScraper(config)
-			results := scraper.Run()
-			if err := scraper.SaveResults(results); err != nil {
-				return cli.Exit(err.Error(), 1)
-			}
-			return nil
-		},
+		}
+		defer file.Close()
+
+		// Determine content type
+		contentType := "text/html; charset=utf-8"
+		if strings.HasSuffix(path, ".js") {
+			contentType = "application/javascript"
+		} else if strings.HasSuffix(path, ".css") {
+			contentType = "text/css"
+		} else if strings.HasSuffix(path, ".svg") {
+			contentType = "image/svg+xml"
+		} else if strings.HasSuffix(path, ".png") {
+			contentType = "image/png"
+		} else if strings.HasSuffix(path, ".json") {
+			contentType = "application/json"
+		}
+		w.Header().Set("Content-Type", contentType)
+
+		http.ServeContent(w, r, path, time.Time{}, file.(ioReadSeeker))
 	}
-	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+}
+
+type ioReadSeeker interface {
+	Read([]byte) (int, error)
+	Seek(int64, int) (int64, error)
+}
+
+func main() {
+	// Build frontend first
+	log.Println("Building frontend...")
+
+	mux := http.NewServeMux()
+
+	// API routes
+	mux.HandleFunc("/api/scrape", handleScrape)
+	mux.HandleFunc("/api/health", handleHealth)
+
+	// Serve frontend static files from frontend/dist
+	distDir := "./frontend/dist"
+	if _, err := os.Stat(distDir); os.IsNotExist(err) {
+		log.Printf("Warning: frontend/dist directory not found. API server will start but frontend won't be served.")
+		log.Printf("Run 'npm run build' in the frontend directory first.")
+	}
+
+	// Serve static files
+	mux.HandleFunc("/", serveFrontend(http.Dir(distDir)))
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	addr := ":" + port
+	log.Printf("Starting server on http://localhost%s", addr)
+	log.Printf("API endpoints:")
+	log.Printf("  POST /api/scrape - Scrape URLs")
+	log.Printf("  GET  /api/health - Health check")
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
 	}
 }
